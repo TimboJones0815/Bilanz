@@ -1,3 +1,10 @@
+#C:/Users/TimFe/AppData/Local/Programs/Python/Python313/python.exe -m pip install -r requirements.txt
+#requests
+#beautifulsoup4
+#lxml
+#html5lib
+#pandas
+#openpyxl
 import requests
 from bs4 import BeautifulSoup
 import pandas as pd
@@ -81,3 +88,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
