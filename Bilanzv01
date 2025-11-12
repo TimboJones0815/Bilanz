@@ -1,0 +1,109 @@
+# ============================================
+# 🧩 Scrape 100 Gemeinden von offenerhaushalt.at
+# ============================================
+
+import requests
+from requests.adapters import HTTPAdapter, Retry
+from bs4 import BeautifulSoup
+import pandas as pd
+import time
+
+# -------------------------------
+# Liste von 100 Gemeinden
+# -------------------------------
+gemeinden = [
+    "langenlois","krems","stpoelten","wiener-neustadt","moedling","baden","klosterneuburg",
+    "stockerau","tulln","korneuburg","mistelbach","gaenserndorf","brunn-am-gebirge","perchtoldsdorf",
+    "purkersdorf","neulengbach","traiskirchen","bischofstetten","mattersburg","oberwart","eisenstadt",
+    "oberpullendorf","neusiedl-am-see","bruck-an-der-leitha","schwechat","himberg","wolkersdorf",
+    "laa-an-der-thaya","retz","horn","zwettl","waidhofen-an-der-thaya","scheibbs","melk",
+    "kirchberg-am-wagram","hollabrunn","gross-enzersdorf","bad-voeslau","traun","linz","wels","steyr",
+    "freistadt","ried-im-innkreis","voecklabruck","gmunden","grieskirchen","bad-ischl","graz",
+    "leoben","kapfenberg","bruck-an-der-mur","judenburg","murau","feldbach","weiz","hartberg",
+    "voitsberg","liezen","zell-am-see","saalfelden","mittersill","hallein","salzburg","oberndorf",
+    "seekirchen","villach","spittal-an-der-drau","hermagor","feldkirchen","wolfsberg","voelkermarkt",
+    "klagenfurt","st-veit-an-der-glan","bludenz","bregenz","dornbirn","feldkirch","hard","lustenau",
+    "rankweil","rohrendorf","enns","amstetten","ybbstalerhütte","gmünd","haag","wieselburg",
+    "ottenstein","eggenburg","waidhofen-an-der-ybbs","mank","stattersdorf","seebenstein","kirchschlag"
+][:100]
+
+# -------------------------------
+# Excel-Pfad (lokal)
+# -------------------------------
+output_path = "Gemeinden_Tables.xlsx"
+
+# -------------------------------
+# Session mit Retry-Mechanismus
+# -------------------------------
+session = requests.Session()
+retries = Retry(total=3, backoff_factor=1, status_forcelist=[500,502,503,504])
+session.mount('https://', HTTPAdapter(max_retries=retries))
+
+# -------------------------------
+# Funktion zum Scrapen der Tabellen
+# -------------------------------
+def scrape_mvag_table(url, gemeinde, source_label):
+    headers = {"User-Agent": "Mozilla/5.0"}
+    try:
+        resp = session.get(url, headers=headers, timeout=15)
+        resp.raise_for_status()
+    except Exception as e:
+        print(f"⚠️ {gemeinde}: {source_label} – request failed ({e})")
+        return pd.DataFrame()
+
+    soup = BeautifulSoup(resp.text, "html.parser")
+    rows = []
+    for tr in soup.find_all("tr", class_="mvag-table-row"):
+        desc_tag = tr.find("td", class_="desc")
+        value_tag = tr.find("td", class_="value")
+        if not desc_tag or not value_tag:
+            continue
+        desc = desc_tag.get_text(strip=True)
+        year_values = value_tag.find_all("span", class_="year-value")
+        row = {"Name": desc}
+        for span in year_values:
+            year = span.get("data-year")
+            val = span.get_text(strip=True).replace(".", "").replace(",", ".")
+            if year:
+                try:
+                    row[year] = float(val)
+                except:
+                    row[year] = val if val != "" else None
+        row["Source"] = source_label
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+# -------------------------------
+# Scraping starten
+# -------------------------------
+all_data = {}  # dict für alle Gemeinden
+
+for i, g in enumerate(gemeinden, 1):
+    g_clean = g.lower().strip()
+    base = f"https://www.offenerhaushalt.at/gemeinde/{g_clean}"
+    url_treemap  = base + "/fhh/treemap"
+    url_barchart = base + "/ehh/barchart"
+    print(f"\n[{i}/{len(gemeinden)}] 🏙️ {g_clean}")
+
+    df_treemap  = scrape_mvag_table(url_treemap,  g_clean, "Finanzhaushalt")
+    df_barchart = scrape_mvag_table(url_barchart, g_clean, "Ergebnishaushalt")
+
+    if df_treemap.empty and df_barchart.empty:
+        print(f"   ➜ Keine Daten gefunden für {g_clean}, überspringe.")
+        continue
+
+    df_all = pd.concat([df_treemap, df_barchart], ignore_index=True)
+    all_data[g_clean[:31]] = df_all  # max. 31 Zeichen für Sheet
+
+    time.sleep(1)  # freundlich zum Server
+
+# -------------------------------
+# Excel nur erstellen, wenn Daten existieren
+# -------------------------------
+if all_data:
+    with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
+        for sheet_name, df in all_data.items():
+            df.to_excel(writer, sheet_name=sheet_name, index=False)
+    print(f"\n✅ Fertig! Excel-Datei erstellt: {output_path}")
+else:
+    print("\n⚠️ Keine Daten für irgendeine Gemeinde gefunden. Excel wurde nicht erstellt.")
